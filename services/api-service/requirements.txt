@@ -12,3 +12,8 @@ flask>=3.0,<4.0
 # downstream services). Not strictly required for the current /api/process stub,
 # but included so the inter-service call can be wired up without a dep change.
 requests>=2.31,<3.0
+
+# Gunicorn — production WSGI server invoked by the Dockerfile CMD. Listed here
+# so `pip install -r requirements.txt` inside the image installs it alongside
+# the application dependencies in a single layer.
+gunicorn>=21.0,<24.0
