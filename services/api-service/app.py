@@ -22,7 +22,7 @@ app = Flask(__name__)
 def index():
     """Simple welcome message — useful for a quick smoke-test."""
     return jsonify({
-        "message": "Welcome to api-service",
+        "message": "Welcome to devops-k8s-orchestration API - v2.0.0",
         "docs": "/api/info",
     })
 
@@ -68,7 +68,7 @@ def readiness():
 def info():
     return jsonify({
         "service": "api-service",
-        "version": "1.0.0",
+        "version": "2.0.0",
         # os.getenv(key, default) is preferred over os.environ[key] because it
         # never raises KeyError — safe even when the var is not set.
         "environment": os.getenv("APP_ENV", "development"),
