@@ -1,0 +1,49 @@
+# api-service.yaml — Creates a stable network endpoint for the api-service Pods.
+#
+# WHY DO WE NEED A SERVICE?
+# Pods are ephemeral: they get new IP addresses every time they restart or are
+# rescheduled.  A Service gives you a single, stable virtual IP (ClusterIP) and
+# DNS name that always routes to the healthy Pods matched by its selector.
+# Kubernetes keeps the Service's Endpoints list in sync with the Pods automatically.
+#
+# TRAFFIC FLOW:
+#   External (Ingress) → api-service Service (ClusterIP :80) → api-service Pods (:8080)
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: api-service         # DNS name within the cluster: api-service.microservices.svc.cluster.local
+                            # (or just "api-service" from within the same namespace).
+                            # This name is also what the Ingress backend references.
+  namespace: microservices
+  labels:
+    app: api-service
+
+spec:
+  # ClusterIP is the default Service type.  It creates a virtual IP reachable
+  # only from inside the cluster — not exposed to the internet directly.
+  # External traffic reaches it via the Ingress controller (ingress.yaml).
+  # Other types: NodePort (opens a port on every Node), LoadBalancer (provisions
+  # a cloud load balancer), ExternalName (CNAME alias).
+  type: ClusterIP
+
+  # The selector tells Kubernetes which Pods to send traffic to.
+  # It matches the `labels: app: api-service` set on Pods by the Deployment.
+  # Kubernetes continuously reconciles the Endpoints list: a Pod that fails its
+  # readiness probe is removed; a newly-Ready Pod is added.
+  selector:
+    app: api-service
+
+  ports:
+    - name: http
+      # The port the Service listens on (what callers connect to).
+      # Using port 80 (standard HTTP) means callers can omit the port:
+      # http://api-service/ instead of http://api-service:8080/.
+      port: 80
+      # The port on the Pod (container) to forward traffic to.
+      # Must match containerPort in api-deployment.yaml and the port
+      # Gunicorn binds to inside the container.
+      targetPort: 8080
+      # Protocol defaults to TCP; listed explicitly for clarity.
+      protocol: TCP

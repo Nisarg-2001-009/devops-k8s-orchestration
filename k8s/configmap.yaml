@@ -1,0 +1,38 @@
+# configmap.yaml — Stores non-sensitive configuration as plain key-value pairs.
+#
+# WHY CONFIGMAP INSTEAD OF HARDCODING IN THE IMAGE?
+# The Twelve-Factor App methodology says config should be separated from code.
+# A ConfigMap lets you change APP_ENV from "production" to "staging" without
+# rebuilding the Docker image — you just update this file and roll the Deployment.
+#
+# WHY NOT PUT SECRETS HERE?
+# ConfigMaps are stored as plain text in etcd and visible to anyone with
+# `kubectl get configmap`.  Sensitive values (passwords, API keys) belong in
+# a Secret (see secret.yaml) which is stored encoded (not encrypted by default,
+# but can be encrypted at rest via KMS and is handled separately by RBAC).
+
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: app-config            # Referenced by name in the Deployment's envFrom block.
+  namespace: microservices    # Must be in the same namespace as the Pods that consume it.
+
+# data holds string key-value pairs that will be injected as environment
+# variables into every container that references this ConfigMap via envFrom.
+data:
+  # Controls application behaviour (logging verbosity, feature flags, etc.).
+  # Pods read this via os.getenv("APP_ENV") in Python.
+  APP_ENV: "production"
+
+  # Log verbosity consumed by the application logger.
+  # "info" is a common production default — verbose enough to debug issues
+  # without flooding log storage with debug noise.
+  LOG_LEVEL: "info"
+
+  # The in-cluster DNS name of worker-service.
+  # Kubernetes creates a DNS record <service-name>.<namespace>.svc.cluster.local
+  # for every Service.  The short form "http://worker-service:8080" works because
+  # both services live in the same namespace, so the search domain resolves it.
+  # api-service reads this via os.getenv("WORKER_SERVICE_URL").
+  WORKER_SERVICE_URL: "http://worker-service:8080"

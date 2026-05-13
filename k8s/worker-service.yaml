@@ -1,0 +1,40 @@
+# worker-service.yaml — Creates a stable network endpoint for the worker-service Pods.
+#
+# WHY PORT 8080 INSTEAD OF 80?
+# api-service.yaml uses port 80 (standard HTTP) because it is exposed through
+# an Ingress to end users who expect standard ports.  worker-service is an
+# internal service — only api-service calls it, and both parties know the port.
+# Using 8080 matches the container port directly, removing the port translation
+# layer and making the networking easier to reason about for an internal service.
+#
+# TRAFFIC FLOW:
+#   api-service Pod → worker-service Service (ClusterIP :8080) → worker-service Pods (:8080)
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: worker-service      # DNS name: worker-service.microservices.svc.cluster.local
+                            # api-service reaches it via the short form "worker-service:8080"
+                            # which matches the WORKER_SERVICE_URL value in configmap.yaml.
+  namespace: microservices
+  labels:
+    app: worker-service
+
+spec:
+  type: ClusterIP           # Reachable only from within the cluster — correct for an
+                            # internal backend that must never be exposed to the internet.
+
+  # Routes traffic to Pods whose labels include "app: worker-service".
+  # Set by worker-deployment.yaml on every Pod it creates.
+  selector:
+    app: worker-service
+
+  ports:
+    - name: http
+      # Service port and target port are both 8080 here — no translation needed.
+      # This makes it immediately obvious that the container and the service
+      # speak on the same port, which simplifies debugging with kubectl port-forward.
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

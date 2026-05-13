@@ -1,0 +1,20 @@
+# namespace.yaml — Creates the Kubernetes Namespace that all other resources
+# in this project live inside.
+#
+# WHY USE A NAMESPACE?
+# A Namespace is a virtual cluster within your real cluster.  It gives you:
+#   - Isolation: resources in "microservices" cannot accidentally collide with
+#     resources in "default" or any other team's namespace (names only need to
+#     be unique *within* a namespace).
+#   - Scoped RBAC: you can grant a service account permission to "microservices"
+#     only, so it cannot touch other namespaces.
+#   - Resource quotas: you can cap total CPU/memory for the whole namespace.
+#   - Easy teardown: `kubectl delete namespace microservices` removes every
+#     resource inside it in one command.
+
+apiVersion: v1          # Namespace is a core API resource — group is omitted, version is "v1"
+kind: Namespace         # The resource type we are creating
+
+metadata:
+  name: microservices   # The namespace name referenced by every other manifest in this project
+                        # via `namespace: microservices`.  All-lowercase, DNS-label format required.

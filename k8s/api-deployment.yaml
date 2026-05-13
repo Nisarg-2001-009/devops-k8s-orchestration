@@ -1,0 +1,154 @@
+# api-deployment.yaml — Manages the desired state of api-service Pods.
+#
+# A Deployment wraps a ReplicaSet and adds:
+#   - Declarative rolling updates (change the image tag → Kubernetes gradually
+#     replaces old Pods with new ones).
+#   - Automatic rollback if the new Pods fail their health checks.
+#   - Self-healing: if a Pod crashes or a Node dies, the ReplicaSet controller
+#     creates a replacement to maintain the desired replica count.
+
+apiVersion: apps/v1       # Deployments live in the "apps" API group.
+kind: Deployment
+
+metadata:
+  name: api-service
+  namespace: microservices
+  labels:
+    # Labels on the Deployment itself are for human organisation (kubectl get
+    # deployments -l app=api-service) — they are NOT used for Pod selection.
+    app: api-service
+
+spec:
+  # ---------------------------------------------------------------------------
+  # Replica count
+  # ---------------------------------------------------------------------------
+  # 3 replicas spread across nodes give us high availability: one Pod can be
+  # evicted for a node upgrade and the service stays up with 2 remaining.
+  replicas: 3
+
+  # ---------------------------------------------------------------------------
+  # Pod selector
+  # ---------------------------------------------------------------------------
+  # The Deployment controller uses this selector to find Pods it owns.
+  # MUST match the labels in spec.template.metadata.labels — Kubernetes
+  # enforces this and will reject the manifest if they differ.
+  selector:
+    matchLabels:
+      app: api-service
+
+  # ---------------------------------------------------------------------------
+  # Update strategy
+  # ---------------------------------------------------------------------------
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # maxSurge: how many extra Pods can exist above `replicas` during the
+      # rollout.  "1" means at most 4 Pods run simultaneously (3 old + 1 new).
+      # Higher values speed up rollouts at the cost of temporary extra resource use.
+      maxSurge: 1
+      # maxUnavailable: how many Pods can be unavailable during the rollout.
+      # "0" means the rollout never removes an old Pod until a new one is Ready,
+      # guaranteeing zero downtime — the new Pod must pass its readiness probe
+      # before the old one is terminated.
+      maxUnavailable: 0
+
+  # ---------------------------------------------------------------------------
+  # Pod template
+  # ---------------------------------------------------------------------------
+  # Everything under `template` describes the Pods the Deployment creates.
+  template:
+    metadata:
+      labels:
+        # These labels MUST match spec.selector.matchLabels above.
+        # The Service (api-service.yaml) also uses "app: api-service" to route
+        # traffic to these Pods — labels are the glue between Services and Pods.
+        app: api-service
+
+    spec:
+      containers:
+        - name: api-service
+          # Image tag is pinned to a specific version (not "latest") so that
+          # deployments are reproducible and a new push to "latest" does not
+          # silently change running workloads.
+          image: nisarg2001009/api-service:v1.0.0
+
+          # The port the container listens on.  Informational only (does not
+          # publish the port) but makes the intent explicit and is used by
+          # some monitoring tools for automatic scrape target discovery.
+          ports:
+            - containerPort: 8080
+
+          # ----------------------------------------------------------------
+          # Environment variables from external sources
+          # ----------------------------------------------------------------
+          # envFrom injects ALL keys from a ConfigMap or Secret as individual
+          # environment variables — cleaner than listing each key manually
+          # under `env` when you want everything from a source.
+          envFrom:
+            # Injects APP_ENV, LOG_LEVEL, WORKER_SERVICE_URL from configmap.yaml.
+            - configMapRef:
+                name: app-config
+            # Injects API_KEY from secret.yaml.
+            # The Secret values are still base64-decoded to plain strings inside
+            # the container — the encoding is only at the storage layer.
+            - secretRef:
+                name: app-secret
+
+          # ----------------------------------------------------------------
+          # Liveness probe
+          # ----------------------------------------------------------------
+          # Kubernetes restarts the container if this probe fails `failureThreshold`
+          # consecutive times.  Use it to detect deadlocks or unrecoverable errors
+          # that leave the process running but unable to serve requests.
+          livenessProbe:
+            httpGet:
+              path: /health/live   # Maps to the @app.route("/health/live") handler.
+              port: 8080
+            # Wait 15 s after the container starts before the first check.
+            # Gives the app time to initialise (load config, warm caches) before
+            # Kubernetes considers a slow start as a failure.
+            initialDelaySeconds: 15
+            # Run the check every 20 s.  Less frequent than readiness because
+            # a liveness failure causes a disruptive restart — we want to be sure.
+            periodSeconds: 20
+            # Require 3 consecutive failures before restarting.  A single blip
+            # (e.g. a GC pause) does not trigger a needless restart.
+            failureThreshold: 3
+
+          # ----------------------------------------------------------------
+          # Readiness probe
+          # ----------------------------------------------------------------
+          # Kubernetes removes the Pod from the Service's Endpoints (stops
+          # routing traffic to it) if this probe fails.  The Pod is NOT
+          # restarted — it is just taken out of rotation until it recovers.
+          # Use it to signal "I'm temporarily not ready" (e.g. warming up,
+          # waiting for a dependency) without triggering a restart.
+          readinessProbe:
+            httpGet:
+              path: /health/ready  # Maps to the @app.route("/health/ready") handler.
+              port: 8080
+            # Shorter initial delay than liveness — we want traffic routed to
+            # the Pod as soon as it is ready, without unnecessary warm-up delay.
+            initialDelaySeconds: 5
+            # Check every 10 s — more frequent than liveness so that a recovered
+            # Pod re-enters rotation quickly.
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # ----------------------------------------------------------------
+          # Resource requests and limits
+          # ----------------------------------------------------------------
+          resources:
+            requests:
+              # `requests` are what the scheduler uses to find a Node with
+              # enough free capacity.  The container is *guaranteed* these
+              # resources once placed.
+              cpu: "100m"      # 100 millicores = 0.1 CPU core
+              memory: "128Mi"  # 128 mebibytes
+            limits:
+              # `limits` are the hard ceiling.  If the container exceeds the
+              # memory limit it is OOMKilled.  If it exceeds the CPU limit it
+              # is throttled (not killed).  Setting limits prevents one noisy
+              # neighbour from starving other Pods on the same Node.
+              cpu: "250m"      # 0.25 CPU core
+              memory: "256Mi"

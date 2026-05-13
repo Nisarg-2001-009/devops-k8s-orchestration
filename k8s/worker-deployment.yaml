@@ -1,0 +1,113 @@
+# worker-deployment.yaml — Manages the desired state of worker-service Pods.
+#
+# Worker-service is an internal background processor — it only receives traffic
+# from api-service, never directly from the outside world.  Two replicas are
+# sufficient for this workload because worker-service is not on the critical
+# path for end-user latency; it can be scaled up independently if processing
+# demand grows without touching api-service.
+#
+# The structure mirrors api-deployment.yaml.  See that file for detailed
+# explanations of fields shared between the two Deployments.
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: worker-service
+  namespace: microservices
+  labels:
+    app: worker-service
+
+spec:
+  # ---------------------------------------------------------------------------
+  # Replica count
+  # ---------------------------------------------------------------------------
+  # 2 replicas keep the service available during a rolling update or a single
+  # node failure.  Fewer than api-service because worker traffic is lower volume
+  # and latency-tolerant.
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: worker-service   # Must match spec.template.metadata.labels below.
+
+  # ---------------------------------------------------------------------------
+  # Update strategy
+  # ---------------------------------------------------------------------------
+  # Same zero-downtime rolling strategy as api-service: new Pod must be Ready
+  # before the old one is removed.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  # ---------------------------------------------------------------------------
+  # Pod template
+  # ---------------------------------------------------------------------------
+  template:
+    metadata:
+      labels:
+        app: worker-service   # Matched by selector above and by worker-service.yaml.
+
+    spec:
+      containers:
+        - name: worker-service
+          image: nisarg2001009/worker-service:v1.0.0   # Pinned tag for reproducible deploys.
+
+          ports:
+            - containerPort: 8080
+
+          # ----------------------------------------------------------------
+          # Environment variables
+          # ----------------------------------------------------------------
+          # Inject the same ConfigMap and Secret as api-service so both services
+          # share a consistent environment configuration (APP_ENV, LOG_LEVEL).
+          # worker-service only uses APP_ENV and API_KEY but injecting the full
+          # ConfigMap is harmless — unused vars are simply ignored by the app.
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secret
+
+          # ----------------------------------------------------------------
+          # Liveness probe
+          # ----------------------------------------------------------------
+          # Restarts the container if /health/live stops returning 200.
+          # initialDelaySeconds 15 gives Gunicorn time to start its workers
+          # before the first check.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+
+          # ----------------------------------------------------------------
+          # Readiness probe
+          # ----------------------------------------------------------------
+          # Removes the Pod from the Service's Endpoints while it is warming up
+          # or temporarily unhealthy, without causing a restart.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # ----------------------------------------------------------------
+          # Resource requests and limits
+          # ----------------------------------------------------------------
+          # Worker-service is CPU/memory-light (echoes JSON, no heavy compute),
+          # so the same limits as api-service are appropriate.  Revisit once
+          # real processing logic is added and you have profiling data.
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"

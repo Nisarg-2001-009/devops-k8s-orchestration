@@ -1,0 +1,79 @@
+# ingress.yaml — Exposes the api-service to traffic from outside the cluster.
+#
+# WHAT IS AN INGRESS?
+# An Ingress is a layer-7 (HTTP/HTTPS) routing rule.  On its own it does nothing —
+# you also need an Ingress Controller (a running reverse proxy, e.g. ingress-nginx)
+# that watches Ingress resources and reconfigures itself accordingly.
+#
+# TRAFFIC FLOW:
+#   Client → Ingress Controller (NodePort / LoadBalancer) → Ingress rules
+#          → api-service Service (:80) → api-service Pods (:8080)
+#
+# INSTALLING THE NGINX INGRESS CONTROLLER (for local use with minikube):
+#   minikube addons enable ingress
+#   # Then add to /etc/hosts:  127.0.0.1  microservices.local
+#   # (or use `minikube tunnel` + the LoadBalancer IP)
+#
+# WHY ONLY api-service IN THE INGRESS?
+# worker-service is an internal backend — it should never be reachable from
+# outside the cluster.  Routing external traffic to it would bypass the
+# api-service validation layer and expose internal processing endpoints.
+
+apiVersion: networking.k8s.io/v1    # Ingress graduated to stable in Kubernetes 1.19.
+kind: Ingress
+
+metadata:
+  name: microservices-ingress
+  namespace: microservices
+  annotations:
+    # Tells the cluster which Ingress Controller should handle this resource.
+    # "nginx" matches the class name registered by the ingress-nginx controller.
+    # Without this annotation (or the equivalent ingressClassName field),
+    # multiple controllers in the same cluster would all try to claim the Ingress.
+    kubernetes.io/ingress.class: "nginx"
+    # Common optional nginx annotations you might add later:
+    #   nginx.ingress.kubernetes.io/rewrite-target: /   # strip the path prefix
+    #   nginx.ingress.kubernetes.io/proxy-body-size: 10m
+    #   cert-manager.io/cluster-issuer: letsencrypt-prod  # TLS via cert-manager
+
+spec:
+  rules:
+    # ---------------------------------------------------------------------------
+    # Virtual host rule
+    # ---------------------------------------------------------------------------
+    # All requests with Host: microservices.local are handled by this rule.
+    # For local development, add "127.0.0.1 microservices.local" to /etc/hosts
+    # (Linux/Mac) or C:\Windows\System32\drivers\etc\hosts (Windows).
+    - host: microservices.local
+      http:
+        paths:
+          # ------------------------------------------------------------------
+          # Route 1: /api → api-service
+          # ------------------------------------------------------------------
+          # Requests to microservices.local/api (and any sub-path like
+          # /api/info or /api/process) are forwarded to the api-service Service.
+          - path: /api
+            # Prefix matching means the path "/api" matches "/api", "/api/",
+            # "/api/info", "/api/process", etc.
+            # The alternative `Exact` type matches only the literal string.
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service   # Must match the Service name in api-service.yaml.
+                port:
+                  number: 80        # The Service's port (which forwards to Pod :8080).
+
+          # ------------------------------------------------------------------
+          # Route 2: / → api-service (catch-all)
+          # ------------------------------------------------------------------
+          # Catches everything else under microservices.local/ including the
+          # root (/), /health/live, /health/ready, etc.
+          # Kubernetes evaluates paths in order of specificity — the more
+          # specific "/api" rule above takes priority over this "/" catch-all.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 80
