@@ -1,0 +1,12 @@
+# requirements.txt — Python dependencies for worker-service.
+#
+# worker-service only needs Flask because it does not call any other services
+# over HTTP (that is api-service's responsibility).  Keeping the dependency
+# footprint small reduces image size and the attack surface.
+#
+# Pin to a minor-version range: new minor releases may include breaking changes,
+# but patch releases within the range deliver security fixes automatically on
+# the next `docker build`.
+
+# Flask — WSGI web framework used to define routes and return JSON responses.
+flask>=3.0,<4.0

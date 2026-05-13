@@ -1,0 +1,14 @@
+# requirements.txt — Python dependencies for api-service.
+#
+# Pin to minor versions so that `pip install` inside the Docker image is
+# reproducible across builds while still receiving patch-level security fixes.
+# Run `pip install --upgrade flask requests` locally and update these pins
+# whenever you intentionally want to pull in new versions.
+
+# Flask — the WSGI web framework used to define routes and return JSON responses.
+flask>=3.0,<4.0
+
+# requests — HTTP client library used to call the worker-service (and any other
+# downstream services). Not strictly required for the current /api/process stub,
+# but included so the inter-service call can be wired up without a dep change.
+requests>=2.31,<3.0
