@@ -1,0 +1,105 @@
+# hpa.yaml — HorizontalPodAutoscaler for api-service.
+#
+# An HPA watches a target workload (here: the api-service Deployment) and
+# continuously adjusts its replica count so that observed resource usage stays
+# close to the configured target.  The control loop runs every 15 seconds by
+# default (--horizontal-pod-autoscaler-sync-period on the controller-manager).
+#
+# How the scaling decision is made
+# ---------------------------------
+# On each sync the HPA fetches the current CPU usage for every running Pod from
+# the Metrics Server, then computes:
+#
+#   desiredReplicas = ceil(currentReplicas × (currentUtilization / targetUtilization))
+#
+# Example — 3 Pods running, average CPU at 80 %, target 50 %:
+#   ceil(3 × (80 / 50)) = ceil(4.8) = 5  →  scale UP to 5 Pods
+#
+# Example — 6 Pods running, average CPU at 20 %, target 50 %:
+#   ceil(6 × (20 / 50)) = ceil(2.4) = 3  →  scale DOWN to 3 Pods
+#
+# CPU utilization is measured relative to each Pod's resource *request* (not
+# limit).  In this project each api-service Pod requests 100 m CPU (see
+# api-deployment.yaml), so 50 % target means the HPA aims to keep each Pod
+# using ~50 m CPU on average.  Always set resource requests on your containers
+# — the HPA cannot compute utilization without them.
+#
+# Scale-down is intentionally slow: by default the HPA will not reduce replicas
+# until the target has been below the threshold for 5 consecutive minutes
+# (--horizontal-pod-autoscaler-downscale-stabilization).  This prevents
+# thrashing when load is spiky.  Scale-up has no built-in delay — it reacts
+# within the next sync cycle.
+#
+# Prerequisites
+# -------------
+# The Metrics Server must be installed in the cluster for CPU/memory metrics to
+# be available.  Without it the HPA status will show "unable to fetch metrics".
+# Install it with:  kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+apiVersion: autoscaling/v2   # v2 is the current stable API; supports multiple
+                             # metrics and fine-grained behaviour policies.
+kind: HorizontalPodAutoscaler
+
+metadata:
+  name: api-service-hpa
+  namespace: microservices   # Must match the namespace of the target Deployment.
+  labels:
+    app: api-service         # Mirrors the label on the Deployment for consistent
+                             # filtering with kubectl -l app=api-service.
+
+spec:
+  # ---------------------------------------------------------------------------
+  # Scale target
+  # ---------------------------------------------------------------------------
+  # Tells the HPA which workload to watch and rescale.  The name must exactly
+  # match the Deployment's metadata.name in api-deployment.yaml.
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-service
+
+  # ---------------------------------------------------------------------------
+  # Replica bounds
+  # ---------------------------------------------------------------------------
+  # The HPA will never set replicas below minReplicas or above maxReplicas,
+  # regardless of what the scaling formula produces.
+  #
+  # minReplicas: 2 — guarantees at least two Pods are always running.  With a
+  # single replica, losing that Pod (node eviction, crash) means zero capacity
+  # until a replacement is scheduled and passes its readiness probe.  Two Pods
+  # also allow a rolling update to proceed without downtime (maxUnavailable: 0
+  # in the Deployment strategy means one Pod must always be Ready).
+  minReplicas: 2
+
+  # maxReplicas: 10 — caps the cluster resource consumption and acts as a safety
+  # rail against a runaway metric or a mis-configured target causing unbounded
+  # scale-out.  Set this to a value your Node pool can actually accommodate;
+  # exceeding Node capacity will leave new Pods Pending indefinitely.
+  maxReplicas: 10
+
+  # ---------------------------------------------------------------------------
+  # Scaling metrics
+  # ---------------------------------------------------------------------------
+  # Each entry in this list is evaluated independently; the HPA picks the
+  # metric that produces the *highest* desired replica count and uses that
+  # value.  This "take the max" behaviour ensures you scale out whenever *any*
+  # metric signals high load, not only when all metrics agree.
+  metrics:
+    - type: Resource          # "Resource" targets a container resource (cpu/memory).
+      resource:
+        name: cpu
+
+        target:
+          # "Utilization" expresses the target as a percentage of the Pod's
+          # resource *request*.  The alternative is "AverageValue" (raw millicores
+          # averaged across Pods), but Utilization is more portable because it
+          # scales automatically if you later change the CPU request.
+          type: Utilization
+
+          # Keep average CPU utilization across all api-service Pods at 50 %.
+          # Headroom rationale: targeting 50 % (not 80–90 %) leaves room for
+          # sudden traffic spikes to be absorbed by the existing Pods while new
+          # ones are being scheduled and warmed up (which can take 15–30 s).
+          # Targeting too high a value means load arrives faster than new Pods
+          # can become Ready, causing latency spikes.
+          averageUtilization: 50
